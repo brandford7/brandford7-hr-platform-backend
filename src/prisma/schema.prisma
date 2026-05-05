@@ -1,0 +1,384 @@
+// HR Platform — Prisma Schema
+
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERN
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  TERMINATED
+}
+
+// LeaveStatus = ENUM  → fixed workflow states, never user-configurable
+// LeaveType   = TABLE → HR creates/edits categories (Annual, Sick, etc.)
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  HALF_DAY
+  REMOTE
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  APPROVE
+  REJECT
+  PASSWORD_CHANGE
+}
+
+
+//  Privilege  →  atomic "can do X on Y"       e.g. EmployeeView
+//  Duty       →  job-responsibility bundle      e.g. MaintainEmployees
+//  Role       →  user-facing assignment         e.g. HR Manager
+model Privilege {
+  id          String   @id @default(uuid())
+  name        String   @unique  // e.g. "EmployeeView", "LeaveApprove"
+  description String?
+  resource    String           // e.g. "employee", "leave"
+  action      String           // e.g. "view", "create", "edit", "delete", "approve"
+  isSystem    Boolean  @default(true) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  dutyPrivileges DutyPrivilege[]
+
+  @@map("privileges")
+}
+
+model Duty {
+  id          String   @id @default(uuid())
+  name        String   @unique  // e.g. "MaintainEmployees", "ManageLeave"
+  displayName String   @map("display_name")
+  description String?
+  isSystem    Boolean  @default(true) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  dutyPrivileges DutyPrivilege[]
+  roleDuties     RoleDuty[]
+
+  @@map("duties")
+}
+
+model DutyPrivilege {
+  dutyId      String @map("duty_id")
+  privilegeId String @map("privilege_id")
+
+  duty      Duty      @relation(fields: [dutyId], references: [id], onDelete: Cascade)
+  privilege Privilege @relation(fields: [privilegeId], references: [id], onDelete: Cascade)
+
+  @@id([dutyId, privilegeId])
+  @@map("duty_privileges")
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique  // "ADMIN" | "MANAGER" | "EMPLOYEE"
+  displayName String   @map("display_name")
+  description String?
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  roleDuties RoleDuty[]
+  users      User[]
+
+  @@map("roles")
+}
+
+model RoleDuty {
+  roleId String @map("role_id")
+  dutyId String @map("duty_id")
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  duty Duty @relation(fields: [dutyId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, dutyId])
+  @@map("role_duties")
+}
+
+// DEPARTMENTS
+model Department {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  description String?
+  managerId   String?   @unique @map("manager_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  manager   Employee?  @relation("DepartmentManager", fields: [managerId], references: [id])
+  employees Employee[] @relation("DepartmentEmployees")
+
+  @@map("departments")
+}
+
+// JOB POSITIONS
+model JobPosition {
+  id          String   @id @default(uuid())
+  title       String   @unique
+  description String?
+  minSalary   Decimal? @map("min_salary") @db.Decimal(12, 2)
+  maxSalary   Decimal? @map("max_salary") @db.Decimal(12, 2)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  employees Employee[]
+
+  @@map("job_positions")
+}
+
+// USERS — auth identity only, no self-signup
+model User {
+  id                  String    @id @default(uuid())
+  email               String    @unique
+  passwordHash        String    @map("password_hash")
+  roleId              String    @map("role_id")
+  isActive            Boolean   @default(true) @map("is_active")
+  mustChangePassword  Boolean   @default(true) @map("must_change_password")
+  passwordChangedAt   DateTime? @map("password_changed_at")
+  lastLoginAt         DateTime? @map("last_login_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  role          Role           @relation(fields: [roleId], references: [id])
+  employee      Employee?
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  tokenHash String    @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+
+// EMPLOYEES — profile record, always created alongside a User
+model Employee {
+  id               String         @id @default(uuid())
+  userId           String         @unique @map("user_id")
+  employeeCode     String         @unique @map("employee_code")
+  firstName        String         @map("first_name")
+  lastName         String         @map("last_name")
+  middleName       String?        @map("middle_name")
+  phone            String?
+  gender           Gender?
+  dateOfBirth      DateTime?      @map("date_of_birth")
+  address          String?
+  city             String?
+  country          String?
+  avatarUrl        String?        @map("avatar_url")
+  departmentId     String?        @map("department_id")
+  jobPositionId    String?        @map("job_position_id")
+  employmentType   EmploymentType @default(FULL_TIME) @map("employment_type")
+  status           EmployeeStatus @default(ACTIVE)
+  salary           Decimal?       @db.Decimal(12, 2)
+  hireDate         DateTime       @map("hire_date")
+  terminationDate  DateTime?      @map("termination_date")
+  emergencyContact String?        @map("emergency_contact")
+  bio              String?
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+  deletedAt        DateTime?      @map("deleted_at")
+
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department        Department?   @relation("DepartmentEmployees", fields: [departmentId], references: [id])
+  jobPosition       JobPosition?  @relation(fields: [jobPositionId], references: [id])
+  managedDepartment Department?   @relation("DepartmentManager")
+  leaveRequests     LeaveRequest[]
+  leaveBalances     LeaveBalance[]
+  attendanceRecords Attendance[]
+
+  @@index([departmentId])
+  @@index([status])
+  @@index([employeeCode])
+  @@map("employees")
+}
+
+
+// LEAVE TYPES — TABLE (HR manages these, not developers)
+model LeaveType {
+  id                 String   @id @default(uuid())
+  name               String   @unique
+  description        String?
+  defaultDays        Int      @map("default_days")
+  isPaid             Boolean  @default(true) @map("is_paid")
+  requiresApproval   Boolean  @default(true) @map("requires_approval")
+  maxConsecutiveDays Int?     @map("max_consecutive_days")
+  isActive           Boolean  @default(true) @map("is_active")
+  colorHex           String   @default("#3B82F6") @map("color_hex")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  leaveRequests LeaveRequest[]
+  leaveBalances LeaveBalance[]
+
+  @@map("leave_types")
+}
+
+// LEAVE BALANCES
+model LeaveBalance {
+  id          String @id @default(uuid())
+  employeeId  String @map("employee_id")
+  leaveTypeId String @map("leave_type_id")
+  year        Int
+  totalDays   Int    @map("total_days")
+  usedDays    Int    @default(0) @map("used_days")
+  pendingDays Int    @default(0) @map("pending_days")
+
+  employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@unique([employeeId, leaveTypeId, year])
+  @@map("leave_balances")
+}
+
+
+// LEAVE REQUESTS
+model LeaveRequest {
+  id           String      @id @default(uuid())
+  employeeId   String      @map("employee_id")
+  leaveTypeId  String      @map("leave_type_id")
+  startDate    DateTime    @map("start_date")
+  endDate      DateTime    @map("end_date")
+  totalDays    Int         @map("total_days")
+  reason       String
+  status       LeaveStatus @default(PENDING)
+  reviewedById String?     @map("reviewed_by_id")
+  reviewNote   String?     @map("review_note")
+  resumptionDate DateTime?   @map("resumption_date") // first working day after leave ends
+  reviewedAt   DateTime?   @map("reviewed_at")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@index([employeeId])
+  @@index([status])
+  @@index([startDate, endDate])
+  @@map("leave_requests")
+}
+
+
+// ATTENDANCE
+model Attendance {
+  id          String           @id @default(uuid())
+  employeeId  String           @map("employee_id")
+  date        DateTime         @db.Date
+  checkIn     DateTime?        @map("check_in")
+  checkOut    DateTime?        @map("check_out")
+  workedHours Decimal?         @map("worked_hours") @db.Decimal(4, 2)
+  status      AttendanceStatus @default(PRESENT)
+  notes       String?
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, date])
+  @@index([employeeId])
+  @@index([date])
+  @@map("attendance")
+}
+
+
+// ANNOUNCEMENTS
+model Announcement {
+  id          String    @id @default(uuid())
+  title       String
+  content     String
+  isPublished Boolean   @default(false) @map("is_published")
+  publishedAt DateTime? @map("published_at")
+  expiresAt   DateTime? @map("expires_at")
+  authorId    String    @map("author_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@index([isPublished])
+  @@map("announcements")
+}
+
+
+// AUDIT LOGS
+model AuditLog {
+  id         String      @id @default(uuid())
+  userId     String      @map("user_id")
+  action     AuditAction
+  resource   String
+  resourceId String?     @map("resource_id")
+  oldValues  Json?       @map("old_values")
+  newValues  Json?       @map("new_values")
+  ipAddress  String?     @map("ip_address")
+  userAgent  String?     @map("user_agent")
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([resource, resourceId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+
+// HOLIDAYS — HR-managed public holidays per year
+// Used to block leave on those dates and compute resumption dates
+model Holiday {
+  id          String   @id @default(uuid())
+  name        String                         // e.g. "Christmas Day"
+  date        DateTime @db.Date              // the actual holiday date
+  year        Int                            // redundant index for fast yearly queries
+  description String?
+  isRecurring Boolean  @default(false) @map("is_recurring") // repeats every year
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([date])
+  @@index([year])
+  @@map("holidays")
+}
