@@ -16,7 +16,7 @@ router.use(authenticate);
 router.get(
   "/all",
   authenticate,
-  requirePrivilege("AttendanceViewAll"),
+  //requirePrivilege("AttendanceViewAll"),
   async (req, res, next) => {
     try {
       const { month, year, departmentId, employeeId } = req.query as Record<
@@ -37,7 +37,7 @@ router.get(
       const user = req.user!;
       const roleName = user.roleName; // "ADMIN", "MANAGER", "EMPLOYEE"
 
-      const isAdminOrHr = roleName === "ADMIN" || roleName === "HR";
+      const isAdminOrHr = roleName === "ADMIN" || roleName === "MANAGER";
       let effectiveDeptId = departmentId;
 
       // 3. Manager Scoping Logic
@@ -51,9 +51,9 @@ router.get(
         if (managedDept) {
           // Force scope to their department, ignoring any departmentId in the query
           effectiveDeptId = managedDept.id;
-        } else if (roleName !== "ADMIN" && roleName !== "HR") {
-          // If they have the privilege but aren't an Admin/HR and don't manage a dept,
-          // they shouldn't be seeing "all" records unless your business logic says otherwise.
+        } else if (roleName !== "ADMIN" && roleName !== "MANAGER") {
+          // If they have the privilege but aren't an Admin/Manager and don't manage a dept,
+          // they shouldn't be seeing "all" records 
           return res.status(403).json({
             success: false,
             message: "Access restricted: You do not manage a department.",
